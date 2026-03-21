@@ -11,7 +11,17 @@ interface CartSidebarProps {
 }
 
 export function CartSidebar({ cart, now, onRemove }: CartSidebarProps) {
+  const { user } = useAuth();
+  const navigate = useNavigate();
   const total = cart.reduce((sum, item) => sum + item.product.price, 0);
+
+  const handleCheckout = () => {
+    if (!user) {
+      navigate("/auth");
+    } else {
+      // Checkout logic
+    }
+  };
 
   return (
     <aside className="flex h-fit flex-col rounded-lg border bg-background">
