@@ -1,6 +1,8 @@
 import { CartItem, RESERVATION_DURATION_MS } from "@/lib/flash-sale-data";
 import { formatTime } from "@/lib/format-time";
 import { X, ShoppingCart } from "lucide-react";
+import { useAuth } from "@/hooks/use-auth";
+import { useNavigate } from "react-router-dom";
 
 interface CartSidebarProps {
   cart: CartItem[];
