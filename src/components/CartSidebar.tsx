@@ -98,8 +98,11 @@ export function CartSidebar({ cart, now, onRemove }: CartSidebarProps) {
             <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Total</span>
             <span className="font-mono-timer text-sm font-semibold text-foreground">${total}</span>
           </div>
-          <button className="flex h-9 w-full items-center justify-center rounded bg-secondary text-xs font-semibold uppercase tracking-wider text-secondary-foreground transition-all hover:-translate-y-px hover:shadow-card-hover active:scale-[0.97]">
-            Checkout
+          <button
+            onClick={handleCheckout}
+            className="flex h-9 w-full items-center justify-center rounded bg-secondary text-xs font-semibold uppercase tracking-wider text-secondary-foreground transition-all hover:-translate-y-px hover:shadow-card-hover active:scale-[0.97]"
+          >
+            {user ? "Checkout" : "Sign in to Checkout"}
           </button>
         </div>
       )}
