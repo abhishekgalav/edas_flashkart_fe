@@ -2,10 +2,28 @@ import { useFlashSale } from "@/hooks/use-flash-sale";
 import { SaleHeader } from "@/components/SaleHeader";
 import { ProductCard } from "@/components/ProductCard";
 import { CartSidebar } from "@/components/CartSidebar";
+import { Loader2 } from "lucide-react";
 
 const Index = () => {
-  const { products, cart, now, saleTimeLeft, addToCart, removeFromCart, isCartFull } =
-    useFlashSale();
+  const {
+    products,
+    cart,
+    now,
+    saleTimeLeft,
+    addToCart,
+    removeFromCart,
+    isCartFull,
+    checkout,
+    loading,
+  } = useFlashSale();
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center bg-surface">
+        <Loader2 className="h-8 w-8 animate-spin text-primary" />
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-surface">
@@ -42,7 +60,7 @@ const Index = () => {
           {/* Cart sidebar */}
           <div className="w-full lg:w-80 lg:shrink-0">
             <div className="sticky top-20">
-              <CartSidebar cart={cart} now={now} onRemove={removeFromCart} />
+              <CartSidebar cart={cart} now={now} onRemove={removeFromCart} onCheckout={checkout} />
             </div>
           </div>
         </div>

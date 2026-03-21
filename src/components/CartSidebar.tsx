@@ -1,27 +1,66 @@
-import { CartItem, RESERVATION_DURATION_MS } from "@/lib/flash-sale-data";
+import { CartItem } from "@/lib/flash-sale-data";
 import { formatTime } from "@/lib/format-time";
-import { X, ShoppingCart } from "lucide-react";
+import { X, ShoppingCart, Loader2, CheckCircle } from "lucide-react";
 import { useAuth } from "@/hooks/use-auth";
 import { useNavigate } from "react-router-dom";
+import { useState } from "react";
+import { toast } from "sonner";
 
 interface CartSidebarProps {
   cart: CartItem[];
   now: number;
   onRemove: (productId: string) => void;
+  onCheckout: () => Promise<{ success: boolean; orderId?: string; total?: number; error?: string }>;
 }
 
-export function CartSidebar({ cart, now, onRemove }: CartSidebarProps) {
+export function CartSidebar({ cart, now, onRemove, onCheckout }: CartSidebarProps) {
   const { user } = useAuth();
   const navigate = useNavigate();
-  const total = cart.reduce((sum, item) => sum + item.product.price, 0);
+  const [checkingOut, setCheckingOut] = useState(false);
+  const [orderComplete, setOrderComplete] = useState<{ orderId: string; total: number } | null>(null);
+  const total = cart.reduce((sum, item) => sum + item.product.price * item.quantity, 0);
 
-  const handleCheckout = () => {
+  const handleCheckout = async () => {
     if (!user) {
       navigate("/auth");
-    } else {
-      // Checkout logic
+      return;
+    }
+    setCheckingOut(true);
+    try {
+      const result = await onCheckout();
+      if (result.success) {
+        setOrderComplete({ orderId: result.orderId!, total: result.total! });
+        toast.success("Order placed successfully!");
+      } else {
+        toast.error(result.error || "Checkout failed");
+      }
+    } catch {
+      toast.error("Checkout failed. Please try again.");
+    } finally {
+      setCheckingOut(false);
     }
   };
+
+  if (orderComplete) {
+    return (
+      <aside className="flex h-fit flex-col items-center gap-3 rounded-lg border bg-background px-4 py-8 text-center">
+        <CheckCircle className="h-10 w-10 text-success" />
+        <h2 className="text-sm font-bold text-foreground">Order Confirmed</h2>
+        <p className="font-mono-timer text-xs text-muted-foreground">
+          #{orderComplete.orderId.slice(0, 8)}
+        </p>
+        <p className="font-mono-timer text-lg font-semibold text-foreground">
+          ${orderComplete.total.toFixed(2)}
+        </p>
+        <button
+          onClick={() => setOrderComplete(null)}
+          className="mt-2 text-xs font-medium text-primary hover:underline"
+        >
+          Continue Shopping
+        </button>
+      </aside>
+    );
+  }
 
   return (
     <aside className="flex h-fit flex-col rounded-lg border bg-background">
@@ -45,13 +84,12 @@ export function CartSidebar({ cart, now, onRemove }: CartSidebarProps) {
       ) : (
         <div className="flex flex-col divide-y">
           {cart.map((item) => {
-            const elapsed = now - item.reservedAt;
-            const remaining = Math.max(0, RESERVATION_DURATION_MS - elapsed);
+            const remaining = Math.max(0, item.expiresAt - now);
             const urgency = remaining < 30000;
 
             return (
               <div
-                key={item.product.id}
+                key={item.id}
                 className="flex items-center gap-3 px-4 py-3 transition-all duration-300"
               >
                 <img
@@ -96,13 +134,23 @@ export function CartSidebar({ cart, now, onRemove }: CartSidebarProps) {
         <div className="border-t px-4 py-3">
           <div className="mb-3 flex items-center justify-between">
             <span className="text-xs font-medium uppercase tracking-wider text-muted-foreground">Total</span>
-            <span className="font-mono-timer text-sm font-semibold text-foreground">${total}</span>
+            <span className="font-mono-timer text-sm font-semibold text-foreground">${total.toFixed(2)}</span>
           </div>
           <button
             onClick={handleCheckout}
-            className="flex h-9 w-full items-center justify-center rounded bg-secondary text-xs font-semibold uppercase tracking-wider text-secondary-foreground transition-all hover:-translate-y-px hover:shadow-card-hover active:scale-[0.97]"
+            disabled={checkingOut}
+            className="flex h-9 w-full items-center justify-center gap-2 rounded bg-secondary text-xs font-semibold uppercase tracking-wider text-secondary-foreground transition-all hover:-translate-y-px hover:shadow-card-hover active:scale-[0.97] disabled:opacity-50"
           >
-            {user ? "Checkout" : "Sign in to Checkout"}
+            {checkingOut ? (
+              <>
+                <Loader2 className="h-3 w-3 animate-spin" />
+                Processing
+              </>
+            ) : user ? (
+              "Checkout"
+            ) : (
+              "Sign in to Checkout"
+            )}
           </button>
         </div>
       )}
