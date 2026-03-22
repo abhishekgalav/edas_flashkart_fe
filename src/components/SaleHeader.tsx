@@ -1,7 +1,7 @@
 import { formatTime } from "@/lib/format-time";
 import { useAuth } from "@/hooks/use-auth";
 import { Link } from "react-router-dom";
-import { LogOut, User } from "lucide-react";
+import { LogOut, User, Package } from "lucide-react";
 
 interface SaleHeaderProps {
   saleTimeLeft: number;
