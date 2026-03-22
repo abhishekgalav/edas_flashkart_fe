@@ -42,6 +42,13 @@ export function SaleHeader({ saleTimeLeft, cartCount }: SaleHeaderProps) {
 
           {user ? (
             <div className="flex items-center gap-2">
+              <Link
+                to="/orders"
+                className="flex h-7 w-7 items-center justify-center rounded text-muted-foreground hover:bg-muted hover:text-foreground active:scale-95 transition-colors"
+                title="My Orders"
+              >
+                <Package className="h-3.5 w-3.5" />
+              </Link>
               <span className="text-[10px] text-muted-foreground truncate max-w-[120px]">
                 {user.email}
               </span>
