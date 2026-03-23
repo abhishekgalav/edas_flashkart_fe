@@ -1,25 +1,39 @@
 import { useState, useEffect, useCallback, useRef } from "react";
-import { supabase } from "@/integrations/supabase/client";
-import { useAuth } from "@/hooks/use-auth";
-import {
-  Product,
-  CartItem,
-  FlashSaleEvent,
-  RESERVATION_DURATION_MS,
-  mapDbProduct,
-} from "@/lib/flash-sale-data";
 import { toast } from "sonner";
+import { api } from "@/services/api";
+
+export const RESERVATION_DURATION_MS = 5 * 60 * 1000; // 5 minutes
+
+export interface Product {
+  id: number;
+  name: string;
+  price: number;
+  originalPrice: number;
+  totalStock: number;
+  remainingStock: number;
+  image: string;
+}
+
+export interface CartItem {
+  id: string;
+  product: Product;
+  reservedAt: number;
+  expiresAt: number;
+  quantity: number;
+  syncing: boolean;
+}
 
 export function useFlashSale() {
-  const { user } = useAuth();
   const [products, setProducts] = useState<Product[]>([]);
   const [cart, setCart] = useState<CartItem[]>([]);
-  const [saleEvent, setSaleEvent] = useState<FlashSaleEvent | null>(null);
-  const [now, setNow] = useState(Date.now());
   const [loading, setLoading] = useState(true);
-  const addingRef = useRef<Set<string>>(new Set());
+  const [now, setNow] = useState(Date.now());
+  const [saleEvent, setSaleEvent] = useState<{ startTime: number; endTime: number } | null>(null);
+  const [saleTimeLeft, setSaleTimeLeft] = useState<number>(0);
+  const addingRef = useRef<Set<number>>(new Set());
+  const [checkingOut, setCheckingOut] = useState(false);
 
-  // Tick every second for timers
+  // Tick every second
   useEffect(() => {
     const id = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(id);
@@ -27,267 +41,330 @@ export function useFlashSale() {
 
   // Fetch flash sale event
   useEffect(() => {
-    async function fetchSaleEvent() {
-      const { data } = await supabase
-        .from("flash_sale_events")
-        .select("*")
-        .eq("is_active", true)
-        .order("start_time", { ascending: false })
-        .limit(1)
-        .single();
-
-      if (data) {
-        setSaleEvent({
-          id: data.id,
-          name: data.name,
-          startTime: new Date(data.start_time).getTime(),
-          endTime: new Date(data.end_time).getTime(),
-          isActive: data.is_active,
-        });
+    const fetchEvent = async () => {
+      try {
+        const res = await api.get("/flash-sale-events/active");
+        if (res.data.success) {
+          setSaleEvent({
+            startTime: new Date(res.data.data.startTime).getTime(),
+            endTime: new Date(res.data.data.endTime).getTime(),
+          });
+        }
+      } catch (err) {
+        toast.error("Failed to fetch flash sale event");
       }
-    }
-    fetchSaleEvent();
+    };
+    fetchEvent();
   }, []);
 
-  // Fetch products
+  // Update saleTimeLeft
   useEffect(() => {
-    async function fetchProducts() {
-      const { data, error } = await supabase
-        .from("products")
-        .select("*")
-        .order("created_at", { ascending: true });
+    if (!saleEvent) return;
 
-      if (data && !error) {
-        setProducts(data.map(mapDbProduct));
-      }
-      setLoading(false);
+    const interval = setInterval(() => {
+      setSaleTimeLeft(Math.max(0, saleEvent.endTime - Date.now()));
+    }, 1000);
+
+    return () => clearInterval(interval);
+  }, [saleEvent]);
+
+  useEffect(() => {
+    if (!saleEvent) return;
+
+    if (saleTimeLeft === 0) {
+      handleSaleEnd();
     }
+  }, [saleTimeLeft]);
+
+  const handleSaleEnd = async () => {
+    try {
+      // 1️⃣ Refresh products
+      const productRes = await api.get("/flash-sale-events/active");
+
+      if (productRes.data.success) {
+        const data = productRes.data.data.products.map((p: any) => ({
+          id: p.id,
+          name: p.name,
+          price: Number(p.price),
+          originalPrice: Number(p.original_price),
+          totalStock: p.totalStock,
+          remainingStock: p.totalStock,
+          image: p.image,
+        }));
+        setProducts(data);
+      }
+
+      // 2️⃣ Refresh cart (important)
+      const cartRes = await api.get("/carts");
+      if (cartRes.data.success && cartRes.data.data) {
+        const cartData = cartRes.data.data;
+
+        const items = cartData.items.map((i: any) => ({
+          id: `cart-${i.productId}`,
+          product: {
+            id: i.productId,
+            name: i.name,
+            price: Number(i.price),
+            originalPrice: Number(i.original_price),
+            totalStock: i.totalStock,
+            remainingStock: i.totalStock,
+            image: i.image,
+          },
+          quantity: i.quantity,
+          reservedAt: Date.now(),
+          expiresAt: new Date(cartData.expiresAt).getTime(),
+          syncing: false,
+        }));
+
+        setCart(items);
+      }
+
+      toast.info("Flash sale ended. Data refreshed.");
+    } catch (err) {
+      console.error("Failed to refresh after sale end");
+    }
+  };
+
+  useEffect(() => {
+    const fetchCart = async () => {
+      try {
+        const res = await api.get("/carts");
+
+        if (res.data.success && res.data.data) {
+          const cartData = res.data.data;
+
+          const items: CartItem[] = cartData.items.map((i: any) => ({
+            id: `cart-${i.productId}`, // stable id (remove Date.now())
+            product: {
+              id: i.productId,
+              name: i.name,
+              price: Number(i.price),
+              originalPrice: Number(i.original_price),
+              totalStock: i.totalStock,
+              remainingStock: i.totalStock - i.quantity, // optional improvement
+              image: i.image,
+            },
+            quantity: i.quantity,
+            reservedAt: Date.now(),
+            expiresAt: new Date(cartData.expiresAt).getTime(),
+            syncing: false,
+          }));
+
+          setCart(items);
+        }
+      } catch {
+        toast.error("Failed to fetch cart");
+      }
+    };
+
+    fetchCart();
+  }, []); // <-- run only once
+
+  // Fetch flash sale products
+  useEffect(() => {
+    const fetchProducts = async () => {
+      setLoading(true);
+      try {
+        const res = await api.get("/flash-sale-events/active");
+        if (res.data.success) {
+          const data = res.data.data.products.map((p: any) => ({
+            id: p.id,
+            name: p.name,
+            price: Number(p.price),
+            originalPrice: Number(p.original_price),
+            totalStock: p.totalStock,
+            remainingStock: p.totalStock,
+            image: p.image,
+          }));
+          setProducts(data);
+        }
+      } catch {
+        toast.error("Failed to fetch products");
+      } finally {
+        setLoading(false);
+      }
+    };
     fetchProducts();
   }, []);
 
-  // Real-time product stock updates (B1 requirement)
+  // Remove expired reservations
+  // useEffect(() => {
+  //   setCart((prev) =>
+  //     prev.filter((item) => {
+  //       const expired = now >= item.expiresAt && !item.syncing;
+  //       if (expired) toast.info(`Reservation expired for ${item.product.name}`);
+  //       return !expired;
+  //     })
+  //   );
+  // }, [now]);
+
   useEffect(() => {
-    const channel = supabase
-      .channel("products-realtime")
-      .on(
-        "postgres_changes",
-        { event: "UPDATE", schema: "public", table: "products" },
-        (payload) => {
-          const updated = mapDbProduct(payload.new);
-          setProducts((prev) =>
-            prev.map((p) => (p.id === updated.id ? updated : p))
-          );
-        }
-      )
-      .subscribe();
+    const expiredItems = cart.filter(
+      (item) => now >= item.expiresAt && !item.syncing
+    );
 
-    return () => { supabase.removeChannel(channel); };
-  }, []);
+    if (expiredItems.length === 0) return;
 
-  // Fetch user's cart items
-  useEffect(() => {
-    if (!user) {
-      setCart([]);
-      return;
-    }
-    async function fetchCart() {
-      // Get user's cart
-      const { data: cartData } = await supabase
-        .from("carts")
-        .select("id")
-        .eq("user_id", user!.id)
-        .single();
-
-      if (!cartData) return;
-
-      const { data: items } = await supabase
-        .from("cart_items")
-        .select("*")
-        .eq("cart_id", cartData.id)
-        .eq("is_expired", false);
-
-      if (items) {
-        setCart(
-          items.map((item: any) => {
-            const product = products.find((p) => p.id === item.product_id);
-            return {
-              id: item.id,
-              product: product || { id: item.product_id, name: "Loading...", price: 0, originalPrice: 0, image: "", totalStock: 0, remainingStock: 0, reservedStock: 0, soldStock: 0, category: "", description: null, flashSaleEventId: null },
-              reservedAt: new Date(item.reserved_at).getTime(),
-              expiresAt: new Date(item.expires_at).getTime(),
-              quantity: item.quantity,
-              syncing: false,
-            };
-          })
-        );
+    expiredItems.forEach(async (item) => {
+      try {
+        await api.delete(`/carts/remove/${item.product.id}`);
+        toast.info(`Reservation expired for ${item.product.name}`);
+      } catch (err) {
+        console.error("Failed to sync expiry with backend");
       }
-    }
-    if (products.length > 0) fetchCart();
-  }, [user, products.length]);
-
-  // Auto-remove expired reservations from UI
-  useEffect(() => {
-    setCart((prev) => {
-      const expired = prev.filter((item) => now >= item.expiresAt && !item.syncing);
-      if (expired.length > 0) {
-        expired.forEach((item) =>
-          toast.info(`Reservation expired for ${item.product.name}`)
-        );
-        return prev.filter((item) => !(now >= item.expiresAt && !item.syncing));
-      }
-      return prev;
     });
-  }, [now]);
 
-  // Release expired reservations server-side periodically
-  useEffect(() => {
-    const id = setInterval(async () => {
-      await supabase.rpc("release_expired_reservations");
-    }, 15000); // every 15s
-    return () => clearInterval(id);
-  }, []);
+    // Remove from local state AFTER API call
+    setCart((prev) =>
+      prev.filter((item) => now < item.expiresAt || item.syncing)
+    );
+  }, [now, cart]);
 
-  const saleTimeLeft = saleEvent
-    ? Math.max(0, saleEvent.endTime - now)
-    : 0;
-
-  const isCartFull = (productId: string) =>
+  const isCartFull = (productId: number) =>
     cart.some((c) => c.product.id === productId && !c.syncing);
 
-  // A2: Concurrency-safe cart reservation with optimistic UI (B3)
   const addToCart = useCallback(
-    async (productId: string) => {
-      if (!user) {
-        toast.error("Sign in to reserve items");
-        return;
-      }
+    async (productId: number, quantity = 1) => {
+      const product = products.find((p) => p.id === productId);
+      if (!product || product.remainingStock < quantity || isCartFull(productId)) return;
       if (addingRef.current.has(productId)) return;
       addingRef.current.add(productId);
 
-      const product = products.find((p) => p.id === productId);
-      if (!product || product.remainingStock <= 0 || isCartFull(productId)) {
-        addingRef.current.delete(productId);
-        return;
-      }
-
-      // B3: Optimistic UI — instantly update
-      const tempId = `temp-${productId}`;
+      const tempId = `cart-${productId}-${Date.now()}`;
       const optimisticItem: CartItem = {
         id: tempId,
         product,
         reservedAt: Date.now(),
         expiresAt: Date.now() + RESERVATION_DURATION_MS,
-        quantity: 1,
+        quantity,
         syncing: true,
       };
       setCart((prev) => [...prev, optimisticItem]);
       setProducts((prev) =>
         prev.map((p) =>
-          p.id === productId ? { ...p, remainingStock: p.remainingStock - 1 } : p
+          p.id === productId ? { ...p, remainingStock: p.remainingStock - quantity } : p
         )
       );
 
       try {
-        // Call atomic DB function (SELECT FOR UPDATE prevents overselling)
-        const { data, error } = await supabase.rpc("reserve_stock", {
-          p_user_id: user.id,
-          p_product_id: productId,
-          p_quantity: 1,
-        });
-
-        if (error) throw new Error(error.message);
-        const result = data as any;
-        if (!result.success) throw new Error(result.error);
-
-        // Replace optimistic item with real data
-        setCart((prev) =>
-          prev.map((c) =>
-            c.id === tempId
-              ? {
+        const res = await api.post("/carts/reserve", { productId, quantity });
+        if (res.data.success) {
+          setCart((prev) =>
+            prev.map((c) =>
+              c.id === tempId
+                ? {
                   ...c,
-                  id: result.cart_item_id,
+                  id: `cart-${productId}-${Date.now()}`,
                   syncing: false,
-                  reservedAt: Date.now(),
-                  expiresAt: new Date(result.expires_at).getTime(),
+                  expiresAt: Date.now() + res.data.data.expiresIn * 1000,
                 }
-              : c
-          )
-        );
-        toast.success(`${product.name} reserved for 5 minutes`);
+                : c
+            )
+          );
+          toast.success(res.data.data.message);
+        } else throw new Error(res.data.message);
       } catch (err: any) {
-        // B3: Rollback on failure
         setCart((prev) => prev.filter((c) => c.id !== tempId));
         setProducts((prev) =>
           prev.map((p) =>
-            p.id === productId ? { ...p, remainingStock: p.remainingStock + 1 } : p
+            p.id === productId ? { ...p, remainingStock: p.remainingStock + quantity } : p
           )
         );
-        toast.error(err.message || `Failed to reserve ${product.name}`);
+        toast.error(err.message || "Failed to reserve product");
       } finally {
         addingRef.current.delete(productId);
       }
     },
-    [products, cart, user]
+    [products, cart]
   );
 
+
   const removeFromCart = useCallback(
-    async (productId: string) => {
+    async (productId: number) => {
       const item = cart.find((c) => c.product.id === productId);
       if (!item) return;
 
-      // Optimistic remove
+      // Optimistically update local state
       setCart((prev) => prev.filter((c) => c.product.id !== productId));
       setProducts((prev) =>
         prev.map((p) =>
-          p.id === productId ? { ...p, remainingStock: p.remainingStock + 1 } : p
+          p.id === productId
+            ? { ...p, remainingStock: p.remainingStock + item.quantity }
+            : p
         )
       );
 
-      // Delete from DB (stock release happens via trigger/function)
-      if (!item.id.startsWith("temp-")) {
-        await supabase.from("cart_items").delete().eq("id", item.id);
-        // Release reserved stock
-        await supabase
-          .from("products")
-          .update({ reserved_stock: Math.max(0, (products.find(p => p.id === productId)?.reservedStock || 1) - 1) })
-          .eq("id", productId);
+      // Call API to remove item from server/cart
+      try {
+        await api.delete(`/carts/remove/${productId}`);
+        // Optionally, show a success message
+        // toast.success(`${item.product.name} removed from cart`);
+      } catch (err: any) {
+        // Rollback local state if API fails
+        setCart((prev) => [...prev, item]);
+        setProducts((prev) =>
+          prev.map((p) =>
+            p.id === productId
+              ? { ...p, remainingStock: p.remainingStock - item.quantity }
+              : p
+          )
+        );
+        toast.error(err.response?.data?.message || "Failed to remove item from cart");
       }
     },
     [cart, products]
   );
 
-  // A3: Checkout with idempotency
-  const checkout = useCallback(async () => {
-    if (!user) return { success: false, error: "Not signed in" };
-    if (cart.length === 0) return { success: false, error: "Cart is empty" };
 
-    const idempotencyKey = `${user.id}-${Date.now()}`;
 
-    const { data, error } = await supabase.rpc("checkout", {
-      p_user_id: user.id,
-      p_idempotency_key: idempotencyKey,
-    });
+const checkout = useCallback(async () => {
+  if (loading) return;
 
-    if (error) return { success: false, error: error.message };
-    const result = data as any;
+  if (cart.length === 0) {
+    return { success: false, error: "Cart is empty" };
+  }
 
-    if (result.success) {
+  setLoading(true);
+
+  const idempotencyKey = crypto.randomUUID(); // ✅ better
+
+  try {
+    const res = await api.post("/orders/checkout", { idempotencyKey });
+
+    if (res.data?.success) {
       setCart([]);
-      return { success: true, orderId: result.order_id, total: result.total };
+
+      return {
+        success: true,
+        orderId: res.data.data.id,
+        total: res.data.data.totalAmount,
+      };
+    } else {
+      return {
+        success: false,
+        error: res.data?.message || "Checkout failed",
+      };
     }
-    return { success: false, error: result.error };
-  }, [user, cart]);
+  } catch (err: any) {
+    return {
+      success: false,
+      error: err.response?.data?.message || "Checkout failed",
+    };
+  } finally {
+    setLoading(false);
+  }
+}, [cart, loading]);
 
   return {
     products,
     cart,
     now,
     saleTimeLeft,
-    saleEvent,
     addToCart,
     removeFromCart,
     isCartFull,
     checkout,
     loading,
+    checkingOut,
   };
 }

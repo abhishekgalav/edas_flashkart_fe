@@ -25,9 +25,16 @@ export function SaleHeader({ saleTimeLeft, cartCount }: SaleHeaderProps) {
           <span className="text-xs font-medium uppercase tracking-wide text-muted-foreground">
             Sale Ends
           </span>
-          <span className="font-mono-timer text-sm font-medium text-foreground">
-            {formatTime(saleTimeLeft)}
-          </span>
+
+          {saleTimeLeft > 0 ? (
+            <span className="font-mono-timer text-sm font-medium text-foreground">
+              {formatTime(saleTimeLeft)}
+            </span>
+          ) : (
+            <span className="text-sm font-semibold text-red-500">
+              Sale Ended
+            </span>
+          )}
         </div>
 
         <div className="flex items-center gap-4">

@@ -1,8 +1,9 @@
 import { useState } from "react";
 import { useNavigate } from "react-router-dom";
-import { supabase } from "@/integrations/supabase/client";
 import { toast } from "sonner";
 import { Mail, Lock, ArrowRight, Loader2 } from "lucide-react";
+import { login } from "@/services/apiServices";
+import { useAuth } from "@/hooks/use-auth";
 
 export default function AuthPage() {
   const [isLogin, setIsLogin] = useState(true);
@@ -10,25 +11,22 @@ export default function AuthPage() {
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const navigate = useNavigate();
+  const { login: setAuth } = useAuth();
 
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setLoading(true);
 
     try {
-      if (isLogin) {
-        const { error } = await supabase.auth.signInWithPassword({ email, password });
-        if (error) throw error;
-        toast.success("Welcome back!");
-      } else {
-        const { error } = await supabase.auth.signUp({
-          email,
-          password,
-          options: { emailRedirectTo: window.location.origin },
-        });
-        if (error) throw error;
-        toast.success("Account created! You're now signed in.");
+      const data = await login(email, password);
+
+      if (!data.success) {
+        throw new Error(data.message || "Login failed");
       }
+
+      setAuth(data.data.access_token, data.data.user);
+
+      toast.success("Welcome back!");
       navigate("/");
     } catch (err: any) {
       toast.error(err.message || "Authentication failed");
